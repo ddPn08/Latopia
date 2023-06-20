@@ -1,0 +1,17 @@
+numpy==1.24.3
+scipy==1.10.1
+librosa==0.9.1
+fairseq==0.12.2
+soxr==0.3.5
+
+# f0 extractor
+pyworld==0.3.3
+torchcrepe==0.0.20
+
+# common lib
+toml
+dacite
+pydantic
+pydub
+fire
+safetensors
