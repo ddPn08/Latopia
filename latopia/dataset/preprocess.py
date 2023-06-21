@@ -28,6 +28,7 @@ logger = set_logger(__name__)
 class WriteWaveTask(BaseModel):
     target_sr: int
     slice: bool = True
+    write_mute: bool = True
     subset_config: List[DatasetSubsetConfig]
 
 
@@ -133,6 +134,23 @@ def write_wave_runner(
             write_wave(audio, os.path.splitext(os.path.basename(file))[0])
 
         progress.value += 1
+
+        mute_filepath = os.path.join(waves_dir, "__mute.wav")
+        mute_16k_filepath = os.path.join(waves_16k_dir, "__mute.wav")
+
+        if task.write_mute:
+            if not os.path.exists(mute_filepath):
+                wavfile.write(
+                    mute_filepath,
+                    task.target_sr,
+                    np.zeros(task.target_sr * 3).astype(np.float32),
+                )
+            if not os.path.exists(mute_16k_filepath):
+                wavfile.write(
+                    mute_16k_filepath,
+                    16000,
+                    np.zeros(16000 * 3).astype(np.float32),
+                )
 
 
 def f0_extract_runner(
@@ -253,7 +271,13 @@ class PreProcessor:
 
         progress_ps.kill()
 
-    def write_wave(self, target_sr: int, slice: bool = True, max_workers: int = 1):
+    def write_wave(
+        self,
+        target_sr: int,
+        slice: bool = True,
+        write_mute: bool = True,
+        max_workers: int = 1,
+    ):
         files = []
         for i, subset in enumerate(self.dataset.subsets):
             for file in subset.files:
@@ -266,6 +290,7 @@ class PreProcessor:
                 WriteWaveTask(
                     target_sr=target_sr,
                     slice=slice,
+                    write_mute=write_mute,
                     subset_config=[subset.config for subset in self.dataset.subsets],
                 ).dict(),
             ),

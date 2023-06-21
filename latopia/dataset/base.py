@@ -85,4 +85,4 @@ class AudioDataset(torch.utils.data.Dataset):
                 self.idx_subset_map[idx] = subset_idx
 
     def __len__(self):
-        return self.length
+        return self.length + (1 if self.config.add_mute else 0)

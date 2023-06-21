@@ -15,7 +15,11 @@ from torch.utils.data import DataLoader
 from latopia.config.dataset import DatasetConfig
 from latopia.config.train import TrainConfig
 from latopia.config.vits import ViTsConfig
-from latopia.dataset.vits import TextAudioCollate, ViTsAudioDataset
+from latopia.dataset.vits import (
+    DistributedBucketSampler,
+    TextAudioCollate,
+    ViTsAudioDataset,
+)
 from latopia.mel_extractor import mel_spectrogram_torch, spec_to_mel_torch
 from latopia.utils import find_empty_port, get_torch_dtype, read_safetensors_metadata
 from latopia.vits.losses import (
@@ -47,6 +51,11 @@ def train(
         if len(device) <= 1:
             device = device[0]
 
+    os.makedirs(config.output_dir, exist_ok=True)
+    config.write_toml(os.path.join(config.output_dir, "config.toml"))
+    dataset_config.write_toml(os.path.join(config.output_dir, "dataset.toml"))
+    vits.write_toml(os.path.join(config.output_dir, "vits.toml"))
+
     if type(device) == torch.device:
         train_runner(
             device,
@@ -57,25 +66,28 @@ def train(
             vits,
         )
     else:
-        processes = []
-        for i, d in enumerate(device):
-            assert d.type == "cuda", "Only cuda devices are supported when using DDP."
-            ps = mp.Process(
-                target=train_runner,
-                args=(
-                    d,
-                    i,
-                    len(device),
-                    config,
-                    dataset_config,
-                    vits,
-                ),
-            )
-            ps.start()
-            processes.append(ps)
+        with mp.Manager() as manager:
+            processes = []
+            for i, d in enumerate(device):
+                assert (
+                    d.type == "cuda"
+                ), "Only cuda devices are supported when using DDP."
+                ps = mp.Process(
+                    target=train_runner,
+                    args=(
+                        d,
+                        i,
+                        len(device),
+                        config,
+                        dataset_config,
+                        vits,
+                    ),
+                )
+                ps.start()
+                processes.append(ps)
 
-        for ps in processes:
-            ps.join()
+            for ps in processes:
+                ps.join()
 
 
 def train_runner(
@@ -89,7 +101,7 @@ def train_runner(
     is_multi_process = world_size > 1
     is_main_process = rank == 0
     global_step = 0
-    precision = get_torch_dtype(config.precision)
+    mixed_precision = get_torch_dtype(config.mixed_precision)
 
     checkpoint_dir = os.path.join(config.output_dir, "checkpoints")
     state_dir = os.path.join(config.output_dir, "states")
@@ -116,13 +128,21 @@ def train_runner(
     collate_fn = TextAudioCollate()
 
     dataset = ViTsAudioDataset(dataset_config, vits.train.dataset)
+    train_sampler = DistributedBucketSampler(
+        dataset,
+        config.batch_size * world_size,
+        [100, 200, 300, 400, 500, 600, 700, 800, 900],
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True,
+    )
     data_loader = DataLoader(
         dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=1,
+        shuffle=False,
+        num_workers=4,
         pin_memory=True,
         collate_fn=collate_fn,
+        batch_sampler=train_sampler,
         persistent_workers=True,
         prefetch_factor=8,
     )
@@ -190,7 +210,7 @@ def train_runner(
         scheduler_g.load_state_dict(resume["scheduler_g"])
         scheduler_d.load_state_dict(resume["scheduler_d"])
 
-    scaler = GradScaler(enabled=config.precision == "fp16")
+    scaler = GradScaler(enabled=mixed_precision is not None)
 
     net_d, net_g = (
         net_d.module if type(net_d) == DDP else net_d,
@@ -219,21 +239,22 @@ def train_runner(
         data = cache if use_cache else enumerate(data_loader)
 
         def save_model(
-            filename_g=f"{config.output_name}-{epoch}-G",
-            filename_d=f"{config.output_name}-{epoch}-D",
+            filename=f"{config.output_name}-{epoch}",
         ):
             metadata = {
                 "epoch": f"{epoch}",
             }
             save_generator(
-                os.path.join(checkpoint_dir, f"{filename_g}.{config.save_as}"),
+                checkpoint_dir,
+                filename,
                 net_g,
                 vits.generator,
                 metadata,
                 save_as=config.save_as,
             )
             save_discriminator(
-                os.path.join(checkpoint_dir, f"{filename_d}.{config.save_as}"),
+                checkpoint_dir,
+                filename,
                 net_d,
                 vits.discriminator,
                 metadata,
@@ -269,7 +290,7 @@ def train_runner(
             if config.cache_in_gpu:
                 cache.append((i, batch))
 
-            with autocast(enabled=precision == torch.float16):
+            with autocast(enabled=mixed_precision is not None, dtype=mixed_precision):
                 g_result = net_g(
                     batch["features"],
                     batch["features_lengths"],
@@ -293,17 +314,16 @@ def train_runner(
                     g_result["ids_slice"],
                     vits.train.segment_size // vits.train.dataset.hop_length,
                 )
-                with autocast(enabled=False):
-                    y_hat_mel = mel_spectrogram_torch(
-                        g_result["o"].float().squeeze(1),
-                        vits.train.dataset.filter_length,
-                        vits.train.dataset.n_mel_channels,
-                        vits.train.dataset.sampling_rate,
-                        vits.train.dataset.hop_length,
-                        vits.train.dataset.win_length,
-                        vits.train.dataset.mel_fmin,
-                        vits.train.dataset.mel_fmax,
-                    ).to(precision)
+                y_hat_mel = mel_spectrogram_torch(
+                    g_result["o"].float().squeeze(1),
+                    vits.train.dataset.filter_length,
+                    vits.train.dataset.n_mel_channels,
+                    vits.train.dataset.sampling_rate,
+                    vits.train.dataset.hop_length,
+                    vits.train.dataset.win_length,
+                    vits.train.dataset.mel_fmin,
+                    vits.train.dataset.mel_fmax,
+                )
 
                 audio = commons.slice_segments(
                     batch["audio"],
@@ -322,7 +342,7 @@ def train_runner(
             scaler.unscale_(optimizer_d)
             scaler.step(optimizer_d)
 
-            with autocast(enabled=config.precision == "fp16"):
+            with autocast(enabled=mixed_precision is not None, dtype=mixed_precision):
                 d_result_2 = net_d(audio, g_result["o"])
                 with autocast(enabled=False):
                     loss_mel = F.l1_loss(y_mel, y_hat_mel) * vits.train.c_mel
@@ -362,11 +382,11 @@ def train_runner(
                 config.save_every_n_epoch > 0
                 and epoch != 0
                 and epoch % config.save_every_n_epoch == 0
+                and epoch != config.max_train_epoch
             ):
                 save_model()
 
     if is_main_process:
         save_model(
-            filename_g=f"{config.output_name}.{config.save_as}",
-            filename_d=f"{config.output_name}.{config.save_as}",
+            filename=config.output_name,
         )

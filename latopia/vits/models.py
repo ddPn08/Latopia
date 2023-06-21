@@ -608,12 +608,14 @@ class MultiPeriodDiscriminator(torch.nn.Module):
 
 
 def save_generator(
-    filepath: str,
+    dir: str,
+    filename: str,
     model: ViTsSynthesizer,
     config: ViTsGeneratorConfig,
     metadata: Dict[str, Any],
     save_as: Literal["pt", "safetensors"] = "safetensors",
 ):
+    filepath = os.path.join(dir, f"{filename}.g.{save_as}")
     metadata = {
         **metadata,
         "_config": json.dumps(
@@ -642,12 +644,14 @@ def save_generator(
 
 
 def save_discriminator(
-    filepath: str,
+    dir: str,
+    filename: str,
     model: MultiPeriodDiscriminator,
     config: ViTsDiscriminatorConfig,
     metadata: Dict[str, Any],
     save_as: Literal["pt", "safetensors"] = "safetensors",
 ):
+    filepath = os.path.join(dir, f"{filename}.d.{save_as}")
     metadata = {
         **metadata,
         "_config": json.dumps(

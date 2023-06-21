@@ -12,4 +12,5 @@ class DatasetSubsetConfig(BaseConfig):
 
 
 class DatasetConfig(BaseConfig):
+    add_mute: bool = True
     subsets: List[DatasetSubsetConfig]

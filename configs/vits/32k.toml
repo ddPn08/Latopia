@@ -1,0 +1,38 @@
+[generator]
+inter_channels = 192
+hidden_channels = 192
+filter_channels = 768
+n_heads = 2
+n_layers = 6
+kernel_size = 3
+p_dropout = 0
+resblock = true
+resblock_kernel_sizes = [3, 7, 11]
+resblock_dilation_sizes = [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+upsample_rates = [10, 8, 2, 2]
+upsample_initial_channel = 512
+upsample_kernel_sizes = [20, 16, 4, 4]
+use_spectral_norm = false
+gin_channels = 256
+emb_channels = 768
+spk_embed_dim = 109
+
+[discriminator]
+use_spectral_norm = false
+periods = [2, 3, 5, 7, 11, 17, 23, 37]
+
+[train]
+segment_size = 12800
+init_lr_ratio = 1
+warmup_epochs = 0
+c_mel = 45
+c_kl = 1.0
+
+[train.dataset]
+max_wav_value = 32768
+sampling_rate = 32000
+filter_length = 1024
+hop_length = 320
+win_length = 1024
+n_mel_channels = 80
+mel_fmin = 0.0

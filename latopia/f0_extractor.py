@@ -22,6 +22,7 @@ def compute(
     max: int = 1100.0,
     min: int = 50.0,
     crepe_model: str = "tiny",
+    p_len: Optional[int] = None,
 ):
     if method == "dio":
         f0, t = pyworld.harvest(
@@ -52,7 +53,6 @@ def compute(
         if audio.ndim == 2 and audio.shape[0] > 1:
             audio = torch.mean(audio, dim=0, keepdim=True).detach()
         audio = audio.detach()
-        logger.info(f"Initiating prediction with a crepe_hop_length of: {hop}")
         pitch: torch.Tensor = torchcrepe.predict(
             audio,
             sr,
@@ -64,7 +64,7 @@ def compute(
             device=torch_device,
             pad=True,
         )
-        p_len = audio.shape[0] // hop
+        p_len = p_len or audio.shape[0] // hop
         # Resize the pitch for final f0
         source = np.array(pitch.squeeze(0).cpu().float().numpy())
         source[source < 0.001] = np.nan
@@ -116,9 +116,9 @@ def course(
 
     f0_mel[f0_mel <= 1] = 1
     f0_mel[f0_mel > bin - 1] = bin - 1
-    f0_coarse = np.rint(f0_mel).astype(np.int32)
-    assert f0_coarse.max() <= 255 and f0_coarse.min() >= 1, (
-        f0_coarse.max(),
-        f0_coarse.min(),
-    )
+    f0_coarse = np.rint(f0_mel).astype(np.int64)
+    # assert f0_coarse.max() <= 255 and f0_coarse.min() >= 1, (
+    #     f0_coarse.max(),
+    #     f0_coarse.min(),
+    # )
     return f0_coarse

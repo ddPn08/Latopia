@@ -55,5 +55,17 @@ class BaseConfig(BaseModel):
     def toml(self):
         return toml.dumps(self.dict())
 
-    def json(self):
-        return json.dumps(self.dict(), indent=4)
+    def yaml(self):
+        return yaml.dump(self.dict())
+
+    def write_json(self, filepath: str):
+        with open(filepath, "w") as f:
+            f.write(self.json(indent=4))
+
+    def write_toml(self, filepath: str):
+        with open(filepath, "w") as f:
+            f.write(self.toml())
+
+    def write_yaml(self, filepath: str):
+        with open(filepath, "w") as f:
+            f.write(self.yaml())

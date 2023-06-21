@@ -15,15 +15,26 @@ class ViTsPipeline:
         self,
         pretrained_model_path: str,
         encoder_model_path: str,
-        target_sampling_rate: int = 40000,
-        device: torch.device = torch.device("cpu"),
+        device: Union[str, torch.device] = torch.device("cpu"),
         torch_dtype: torch.dtype = torch.float32,
     ):
-        self.device = device
+        self.device = (
+            device if isinstance(device, torch.device) else torch.device(device)
+        )
         self.dtype = torch_dtype
 
-        if device.type == "cuda":
-            vram = torch.cuda.get_device_properties(device).total_memory / 1024**3
+        self.encoder, _ = feature_extractor.load_encoder(
+            encoder_model_path, self.device
+        )
+        self.encoder = self.encoder.to(self.device, torch_dtype)
+
+        self.model = load_generator(pretrained_model_path, mode="infer")
+        self.model.eval().to(self.device, torch_dtype)
+
+        if self.device.type == "cuda":
+            vram = (
+                torch.cuda.get_device_properties(self.device).total_memory / 1024**3
+            )
         else:
             vram = None
 
@@ -46,17 +57,11 @@ class ViTsPipeline:
         self.sr = 16000  # hubert input sample rate
         self.window = 160  # hubert input window
         self.t_pad = self.sr * self.x_pad  # padding time for each utterance
-        self.t_pad_tgt = target_sampling_rate * self.x_pad
+        self.t_pad_tgt = self.model.sampling_rate * self.x_pad
         self.t_pad2 = self.t_pad * 2
         self.t_query = self.sr * self.x_query  # query time before and after query point
         self.t_center = self.sr * self.x_center  # query cut point position
         self.t_max = self.sr * self.x_max  # max time for no query
-
-        self.encoder, _ = feature_extractor.load_encoder(encoder_model_path, device)
-        self.encoder = self.encoder.to(device, torch_dtype)
-
-        self.model = load_generator(pretrained_model_path, mode="infer")
-        self.model.eval().to(device, torch_dtype)
 
     def _convert(
         self,
@@ -132,6 +137,7 @@ class ViTsPipeline:
             audio_pad,
             f0_method,
             self.sr,
+            p_len=p_len,
         )
         f0_nsf *= pow(2, transpose / 12)
         f0 = f0_extractor.course(f0_nsf, 256)

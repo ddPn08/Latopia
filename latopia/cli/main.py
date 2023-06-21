@@ -23,8 +23,16 @@ def infer():
     return infer.run()
 
 
+def webui():
+    from latopia.cli.subcommands import webui
+
+    return webui.run()
+
+
 def main():
-    return Fire({"preprocess": preprocess, "train": train, "infer": infer})
+    return Fire(
+        {"preprocess": preprocess, "train": train, "infer": infer, "webui": webui}
+    )
 
 
 if __name__ == "__main__":

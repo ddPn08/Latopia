@@ -15,3 +15,9 @@ pydantic
 pydub
 fire
 safetensors
+
+# webui
+reactpy[fastapi]
+fastapi
+uvicorn
+python-multipart

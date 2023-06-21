@@ -15,6 +15,7 @@ def all(
     config_path: str,
     target_sr: int,
     max_workers: int = 1,
+    write_mute: bool = True,
     slice: bool = True,
     f0_method: F0_METHODS_TYPE = "crepe",
     crepe_model: str = "tiny",
@@ -62,6 +63,7 @@ def all(
     preprocessor.write_wave(
         target_sr,
         slice=slice,
+        write_mute=write_mute,
         max_workers=max_workers,
     )
     logger.info("Extracting f0...")
