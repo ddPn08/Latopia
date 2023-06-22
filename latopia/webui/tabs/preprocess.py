@@ -27,7 +27,7 @@ def preprocess(
     f0_min: int = 50.0,
     f0_mel_max: Optional[int] = None,
     f0_mel_min: Optional[int] = None,
-    encoder_path: str = "./models/encoder/checkpoint_best_legacy_500.pt",
+    encoder_path: str = "./models/encoders/checkpoint_best_legacy_500.pt",
     encoder_channels: int = 768,
     encoder_output_layer: int = 12,
     device: str = "cpu",

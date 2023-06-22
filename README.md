@@ -64,5 +64,5 @@ latopia train vits ./configs/zundamon/config.toml ./configs/zundamon/dataset.tom
 #### Inference
 
 ```bash
-latopia infer vits ./input.wav output.wav ./output/checkpoints/zundamon-30-G.safetensors ./models/encoder/checkpoint_best_legacy_500.pt --device cuda --torch_dtype fp16 --f0_method harvest
+latopia infer vits ./input.wav output.wav ./output/checkpoints/zundamon-30-G.safetensors ./models/encoders/checkpoint_best_legacy_500.pt --device cuda --torch_dtype fp16 --f0_method harvest
 ```
