@@ -68,9 +68,7 @@ def train(
     else:
         processes = []
         for i, d in enumerate(device):
-            assert (
-                d.type == "cuda"
-            ), "Only cuda devices are supported when using DDP."
+            assert d.type == "cuda", "Only cuda devices are supported when using DDP."
             ps = mp.Process(
                 target=train_runner,
                 args=(

@@ -35,6 +35,9 @@ class AudioDataSubset:
         self.f0_nsf: List[str] = None
         self.features: List[str] = None
 
+        if len(self.get_waves()) > 0:
+            self.files = self.get_waves()
+
     def get_processed_dir(self):
         return os.path.join(self.config.data_dir, AudioDataSubset.PROCESSED_DIR)
 
@@ -46,6 +49,8 @@ class AudioDataSubset:
             AudioDataSubset.PROCESSED_DIR,
             dir_name,
         )
+        if not os.path.exists(dir_path):
+            return []
         setattr(
             self, var_name, sorted(glob.glob(f"{dir_path}/**/*{ext}", recursive=True))
         )
@@ -77,7 +82,7 @@ class AudioDataset(torch.utils.data.Dataset):
         for subset_config in self.config.subsets:
             self.subsets.append(AudioDataSubset(subset_config))
 
-        self.length = sum([len(subset.files) for subset in self.subsets])
+        self.length = sum([len(subset.get_waves()) for subset in self.subsets])
 
         self.idx_subset_map = {}
         for subset_idx, subset in enumerate(self.subsets):
