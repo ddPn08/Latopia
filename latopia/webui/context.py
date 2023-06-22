@@ -14,7 +14,7 @@ INFER_INPUT_FILE = {
 
 class Options(BaseModel):
     vits_model_dir: str = os.path.join(ROOT_DIR, "models", "checkpoints", "vits")
-    encoder_dir: str = os.path.join(ROOT_DIR, "models", "encoder")
+    encoder_dir: str = os.path.join(ROOT_DIR, "models", "encoders")
     output_dir: str = os.path.join(ROOT_DIR, "output")
     device: str = "cuda"
 

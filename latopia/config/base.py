@@ -11,16 +11,11 @@ line_break_re = re.compile(r"\r\n|\r|\n")
 T = TypeVar("T", bound="BaseConfig")
 
 
-def parser(fn: Callable):
-    def wrapper(cls, file_path_or_str: str):
-        if not line_break_re.search(file_path_or_str) and os.path.exists(
-            file_path_or_str
-        ):
-            with open(file_path_or_str) as f:
-                file_path_or_str = f.read()
-        return fn(cls, file_path_or_str)
-
-    return wrapper
+def path_to_str(file_path_or_str: str):
+    if not line_break_re.search(file_path_or_str) and os.path.exists(file_path_or_str):
+        with open(file_path_or_str) as f:
+            file_path_or_str = f.read()
+    return file_path_or_str
 
 
 class BaseConfig(BaseModel):
@@ -38,18 +33,18 @@ class BaseConfig(BaseModel):
             raise ValueError(f"Unknown file type: {filepath}")
 
     @classmethod
-    @parser
     def parse_json(cls: Type[T], raw: str) -> T:
+        raw = path_to_str(raw)
         return cls.parse_obj(json.loads(raw))
 
     @classmethod
-    @parser
     def parse_toml(cls: Type[T], raw: str) -> T:
+        raw = path_to_str(raw)
         return cls.parse_obj(toml.loads(raw))
 
     @classmethod
-    @parser
     def parse_yaml(cls: Type[T], raw: str) -> T:
+        raw = path_to_str(raw)
         return cls.parse_obj(yaml.load(raw, Loader=yaml.FullLoader))
 
     def toml(self):

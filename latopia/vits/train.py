@@ -35,7 +35,7 @@ from latopia.vits.models import (
     save_generator,
 )
 
-from . import commons
+from latopia import torch_utils
 
 
 def train(
@@ -66,28 +66,27 @@ def train(
             vits,
         )
     else:
-        with mp.Manager() as manager:
-            processes = []
-            for i, d in enumerate(device):
-                assert (
-                    d.type == "cuda"
-                ), "Only cuda devices are supported when using DDP."
-                ps = mp.Process(
-                    target=train_runner,
-                    args=(
-                        d,
-                        i,
-                        len(device),
-                        config,
-                        dataset_config,
-                        vits,
-                    ),
-                )
-                ps.start()
-                processes.append(ps)
+        processes = []
+        for i, d in enumerate(device):
+            assert (
+                d.type == "cuda"
+            ), "Only cuda devices are supported when using DDP."
+            ps = mp.Process(
+                target=train_runner,
+                args=(
+                    d,
+                    i,
+                    len(device),
+                    config,
+                    dataset_config,
+                    vits,
+                ),
+            )
+            ps.start()
+            processes.append(ps)
 
-            for ps in processes:
-                ps.join()
+        for ps in processes:
+            ps.join()
 
 
 def train_runner(
@@ -139,7 +138,7 @@ def train_runner(
     data_loader = DataLoader(
         dataset,
         shuffle=False,
-        num_workers=4,
+        num_workers=1,
         pin_memory=True,
         collate_fn=collate_fn,
         batch_sampler=train_sampler,
@@ -309,7 +308,7 @@ def train_runner(
                     vits.train.dataset.mel_fmin,
                     vits.train.dataset.mel_fmax,
                 )
-                y_mel = commons.slice_segments(
+                y_mel = torch_utils.slice_segments(
                     mel,
                     g_result["ids_slice"],
                     vits.train.segment_size // vits.train.dataset.hop_length,
@@ -325,7 +324,7 @@ def train_runner(
                     vits.train.dataset.mel_fmax,
                 )
 
-                audio = commons.slice_segments(
+                audio = torch_utils.slice_segments(
                     batch["audio"],
                     g_result["ids_slice"] * vits.train.dataset.hop_length,
                     vits.train.segment_size,
