@@ -172,7 +172,7 @@ def ui():
                 html.div(
                     *[
                         LabeledRadio(name, f0_method, set_f0_method)
-                        for name in ["dio", "harvest", "crepe", "mangio-crepe"]
+                        for name in ["dio", "harvest", "crepe"]
                     ]
                 ),
                 "F0 Method",

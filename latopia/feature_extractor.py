@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from fairseq import checkpoint_utils
 from fairseq.models.hubert import HubertModel
+from torchaudio.transforms import Resample
 
 from latopia.utils import clear_vram
 
@@ -19,20 +20,34 @@ def load_encoder(filepath: str, device) -> Tuple[HubertModel, Dict]:
     return encoder_model, cfg
 
 
+RESAMPLING_KERNEL = {}
+SAMPLING_RATE = 16000
+
+
 def extract(
-    audio: np.ndarray,
+    feats: Union[np.ndarray, torch.Tensor],
+    sampling_rate: int,
     device: torch.device,
     encoder: HubertModel,
-    encoder_channels: int,
     encoder_output_layer: int,
     normalize: bool = True,
     return_type: Literal["numpy", "torch"] = "numpy",
     dtype: torch.dtype = torch.float32,
 ):
-    feats = torch.from_numpy(audio).to(device, dtype)
-    if feats.dim() == 2:
-        feats = feats.mean(-1)
-    assert feats.dim() == 1, feats.dim()
+    if isinstance(feats, np.ndarray):
+        feats = torch.from_numpy(feats).to(device, dtype)
+
+    if sampling_rate != SAMPLING_RATE:
+        key_str = str(sampling_rate)
+        if key_str not in RESAMPLING_KERNEL:
+            RESAMPLING_KERNEL[key_str] = Resample(
+                sampling_rate, SAMPLING_RATE, lowpass_filter_width=128
+            ).to(device)
+        feats = RESAMPLING_KERNEL[key_str].to(device, dtype)(feats)
+
+    if feats.size(-1) < 400:
+        feats = F.pad(feats, (0, 400 - feats.size(-1)))
+
     if normalize:
         with torch.no_grad():
             feats = F.layer_norm(feats, feats.shape)
@@ -46,15 +61,12 @@ def extract(
 
     with torch.no_grad():
         logits = encoder.extract_features(**inputs)
-        if encoder_channels == 768:
-            feats = logits[0]
-        else:
-            feats = encoder.final_proj(logits[0])
+        feats = logits[0]
 
     del padding_mask
     clear_vram()
 
     if return_type == "numpy":
-        return feats.squeeze(0).float().cpu().numpy()
+        return feats.cpu().numpy()
     elif return_type == "torch":
         return feats

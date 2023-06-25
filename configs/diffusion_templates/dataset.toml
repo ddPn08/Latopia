@@ -1,0 +1,10 @@
+sampling_rate = 44100
+hop_length = 512
+write_mute = true
+slice = true
+f0_max = 1100.0
+f0_min = 50.0
+f0_mel_min = 0
+
+[[subsets]]
+data_dir = "./datasets/template"

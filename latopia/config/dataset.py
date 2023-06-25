@@ -12,5 +12,12 @@ class DatasetSubsetConfig(BaseConfig):
 
 
 class DatasetConfig(BaseConfig):
-    add_mute: bool = True
+    write_mute: bool = True
+    slice: bool = True
+    sampling_rate: int = 40000
+    hop_length: int = 512
+    f0_max: int = 1100.0
+    f0_min: int = 50.0
+    f0_mel_max: Optional[int] = None
+    f0_mel_min: Optional[int] = 0
     subsets: List[DatasetSubsetConfig]

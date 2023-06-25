@@ -1,0 +1,15 @@
+max_wav_value = 32768
+filter_length = 1024
+win_length = 1024
+n_mel_channels = 80
+
+sampling_rate = 32000
+hop_length = 320
+write_mute = true
+slice = true
+f0_max = 1100.0
+f0_min = 50.0
+f0_mel_min = 0.0
+
+[[subsets]]
+data_dir = "./datasets/template"

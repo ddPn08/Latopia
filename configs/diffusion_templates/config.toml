@@ -1,0 +1,10 @@
+pretrained_model_path = "./models/checkpoints/diff/pretrained.pt"
+output_dir = "./models/checkpoints/diff/template"
+output_name = "template"
+cache_in_gpu = false
+batch_size = 1
+save_every_n_epoch = 5
+max_train_epoch = 30
+
+vocoder_type = "nsf-hifigan"
+vocoder_dir = "./models/vocoders/nsf_hifigan"

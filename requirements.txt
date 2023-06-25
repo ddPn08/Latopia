@@ -10,9 +10,7 @@ torchcrepe==0.0.20
 
 # common lib
 toml
-dacite
 pydantic
-pydub
 fire
 safetensors
 

@@ -4,6 +4,8 @@ from .base import BaseConfig
 
 
 class TrainConfig(BaseConfig):
+    dataset_config: Optional[str] = None
+    model_config: Optional[str] = None
     pretrained_model_path: Optional[str] = None
     pretrained_discriminator_path: Optional[str] = None
     resume_model_path: Optional[str] = None

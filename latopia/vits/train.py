@@ -2,7 +2,6 @@ import gc
 import os
 from typing import *
 
-import safetensors.torch
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -12,16 +11,15 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
-from latopia.config.dataset import DatasetConfig
-from latopia.config.train import TrainConfig
-from latopia.config.vits import ViTsConfig
+from latopia import torch_utils
+from latopia.config.vits import ViTsDatasetConfig, ViTsModelConfig, ViTsTrainConfig
 from latopia.dataset.vits import (
     DistributedBucketSampler,
-    TextAudioCollate,
+    ViTsAudioCollate,
     ViTsAudioDataset,
 )
 from latopia.mel_extractor import mel_spectrogram_torch, spec_to_mel_torch
-from latopia.utils import find_empty_port, get_torch_dtype, read_safetensors_metadata
+from latopia.utils import find_empty_port, get_torch_dtype, load_model
 from latopia.vits.losses import (
     discriminator_loss,
     feature_loss,
@@ -35,14 +33,12 @@ from latopia.vits.models import (
     save_generator,
 )
 
-from latopia import torch_utils
-
 
 def train(
     device: Union[List[torch.device], torch.device],
-    config: TrainConfig,
-    dataset_config: DatasetConfig,
-    vits: ViTsConfig,
+    config: ViTsTrainConfig,
+    dataset_config: ViTsDatasetConfig,
+    model_config: ViTsModelConfig,
 ):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(find_empty_port())
@@ -54,7 +50,10 @@ def train(
     os.makedirs(config.output_dir, exist_ok=True)
     config.write_toml(os.path.join(config.output_dir, "config.toml"))
     dataset_config.write_toml(os.path.join(config.output_dir, "dataset.toml"))
-    vits.write_toml(os.path.join(config.output_dir, "vits.toml"))
+    model_config.write_toml(os.path.join(config.output_dir, "vits.toml"))
+
+    if config.seed is None:
+        config.seed = int(torch.randint(0, 2**32, (1,)).item())
 
     if type(device) == torch.device:
         train_runner(
@@ -63,7 +62,7 @@ def train(
             1,
             config,
             dataset_config,
-            vits,
+            model_config,
         )
     else:
         processes = []
@@ -77,7 +76,7 @@ def train(
                     len(device),
                     config,
                     dataset_config,
-                    vits,
+                    model_config,
                 ),
             )
             ps.start()
@@ -91,9 +90,9 @@ def train_runner(
     device: torch.device,
     rank: int,
     world_size: int,
-    config: TrainConfig,
-    dataset_config: DatasetConfig,
-    vits: ViTsConfig,
+    config: ViTsTrainConfig,
+    dataset_config: ViTsDatasetConfig,
+    model_config: ViTsModelConfig,
 ):
     is_multi_process = world_size > 1
     is_main_process = rank == 0
@@ -114,17 +113,11 @@ def train_runner(
             backend="gloo", init_method="env://", rank=rank, world_size=world_size
         )
 
-    if is_multi_process:
-        torch.cuda.set_device(rank)
-
-    if config.seed is None:
-        config.seed = int(torch.randint(0, 2**32, (1,)).item())
-
     torch.manual_seed(config.seed)
 
-    collate_fn = TextAudioCollate()
+    collate_fn = ViTsAudioCollate()
 
-    dataset = ViTsAudioDataset(dataset_config, vits.train.dataset)
+    dataset = ViTsAudioDataset(dataset_config)
     train_sampler = DistributedBucketSampler(
         dataset,
         config.batch_size * world_size,
@@ -145,12 +138,12 @@ def train_runner(
     )
 
     net_g = ViTsSynthesizer(
-        vits.generator,
-        vits.train.dataset.filter_length // 2 + 1,
-        vits.train.segment_size // vits.train.dataset.hop_length,
-        sampling_rate=config.sampling_rate,
+        model_config.generator,
+        dataset_config.filter_length // 2 + 1,
+        config.segment_size // dataset_config.hop_length,
+        sampling_rate=dataset_config.sampling_rate,
     ).to(device=device)
-    net_d = MultiPeriodDiscriminator(vits.discriminator).to(device=device)
+    net_d = MultiPeriodDiscriminator(model_config.discriminator).to(device=device)
 
     if is_multi_process:
         net_g = DDP(net_g, device_ids=[rank])
@@ -168,21 +161,6 @@ def train_runner(
         betas=config.betas,
         eps=config.eps,
     )
-
-    def load_model(filepath: str):
-        ext = os.path.splitext(filepath)[1]
-        if ext == ".safetensors":
-            state_dict = safetensors.torch.load_file(filepath)
-            metadata = read_safetensors_metadata(filepath)
-        else:
-            state_dict = torch.load(filepath)
-            metadata = state_dict.pop("metadata") if "metadata" in state_dict else {}
-            if "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-            elif "model" in state_dict:
-                state_dict = state_dict["model"]
-
-        return state_dict, metadata
 
     epoch = 0
 
@@ -222,10 +200,11 @@ def train_runner(
         net_d.load_state_dict(state_dict)
 
     cache = []
-    progress_bar = tqdm.tqdm(
-        range((config.max_train_epoch - epoch + 1) * len(data_loader))
-    )
-    progress_bar.set_postfix(epoch=epoch)
+    if is_main_process:
+        progress_bar = tqdm.tqdm(
+            range((config.max_train_epoch - epoch + 1) * len(data_loader))
+        )
+        progress_bar.set_postfix(epoch=epoch)
     step = -1
 
     for epoch in range(epoch, config.max_train_epoch + 1):
@@ -245,7 +224,7 @@ def train_runner(
                 checkpoint_dir,
                 filename,
                 net_g,
-                vits.generator,
+                model_config.generator,
                 metadata,
                 save_as=config.save_as,
             )
@@ -253,7 +232,7 @@ def train_runner(
                 checkpoint_dir,
                 filename,
                 net_d,
-                vits.discriminator,
+                model_config.discriminator,
                 metadata,
                 save_as=config.save_as,
             )
@@ -277,7 +256,8 @@ def train_runner(
 
         for i, batch in data:
             step += 1
-            progress_bar.update(1)
+            if is_main_process:
+                progress_bar.update(1)
 
             if not use_cache:
                 for k, v in batch.items():
@@ -293,39 +273,38 @@ def train_runner(
                     batch["features_lengths"],
                     batch["f0"],
                     batch["f0_nsf"],
-                    batch["mel"],
-                    batch["mel_lengths"],
+                    batch["spec"],
+                    batch["spec_lengths"],
                     batch["speaker_id"],
                 )
-
+                y_hat_mel = mel_spectrogram_torch(
+                    g_result["o"].float().squeeze(1),
+                    dataset_config.filter_length,
+                    dataset_config.n_mel_channels,
+                    dataset_config.sampling_rate,
+                    dataset_config.hop_length,
+                    dataset_config.win_length,
+                    dataset_config.f0_mel_min,
+                    dataset_config.f0_mel_max,
+                )
                 mel = spec_to_mel_torch(
-                    batch["mel"],
-                    vits.train.dataset.filter_length,
-                    vits.train.dataset.hop_length,
-                    vits.train.dataset.sampling_rate,
-                    vits.train.dataset.mel_fmin,
-                    vits.train.dataset.mel_fmax,
+                    batch["spec"],
+                    dataset_config.filter_length,
+                    dataset_config.hop_length,
+                    dataset_config.sampling_rate,
+                    dataset_config.f0_mel_min,
+                    dataset_config.f0_mel_max,
                 )
                 y_mel = torch_utils.slice_segments(
                     mel,
                     g_result["ids_slice"],
-                    vits.train.segment_size // vits.train.dataset.hop_length,
-                )
-                y_hat_mel = mel_spectrogram_torch(
-                    g_result["o"].float().squeeze(1),
-                    vits.train.dataset.filter_length,
-                    vits.train.dataset.n_mel_channels,
-                    vits.train.dataset.sampling_rate,
-                    vits.train.dataset.hop_length,
-                    vits.train.dataset.win_length,
-                    vits.train.dataset.mel_fmin,
-                    vits.train.dataset.mel_fmax,
+                    config.segment_size // dataset_config.hop_length,
                 )
 
                 audio = torch_utils.slice_segments(
                     batch["audio"],
-                    g_result["ids_slice"] * vits.train.dataset.hop_length,
-                    vits.train.segment_size,
+                    g_result["ids_slice"] * dataset_config.hop_length,
+                    config.segment_size,
                 )
 
                 d_result = net_d(audio, g_result["o"].detach())
@@ -342,7 +321,7 @@ def train_runner(
             with autocast(enabled=mixed_precision is not None, dtype=mixed_precision):
                 d_result_2 = net_d(audio, g_result["o"])
                 with autocast(enabled=False):
-                    loss_mel = F.l1_loss(y_mel, y_hat_mel) * vits.train.c_mel
+                    loss_mel = F.l1_loss(y_mel, y_hat_mel) * config.c_mel
                     loss_kl = kl_loss(
                         g_result["z_p"],
                         g_result["logs_q"],

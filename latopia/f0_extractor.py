@@ -4,26 +4,38 @@ import numpy as np
 import pyworld
 import torch
 import torchcrepe
+from torchaudio.transforms import Resample
 
 from .device import get_optimal_torch_device
 from .logger import set_logger
 
 logger = set_logger(__name__)
 
-F0_METHODS = ["dio", "harvest", "mangio-crepe", "crepe"]
-F0_METHODS_TYPE = Literal["dio", "harvest", "mangio-crepe", "crepe"]
+F0_METHODS = ["dio", "harvest", "crepe"]
+F0_METHODS_TYPE = Literal["dio", "harvest", "crepe"]
+
+CREPE_SAMPLING_RATE = 16000
+
+CREPE_RESAMPLE_KERNEL = {}
 
 
 def compute(
     audio: np.ndarray,
     method: F0_METHODS_TYPE = "crepe",
-    sr: int = 16000,
+    sr: int = 40000,
     hop: int = 160,
     max: int = 1100.0,
     min: int = 50.0,
     crepe_model: str = "tiny",
-    p_len: Optional[int] = None,
 ):
+    resample_kernel = lambda x: x
+    if "crepe" in method and sr != CREPE_SAMPLING_RATE:
+        key_str = str(sr)
+        if key_str not in CREPE_RESAMPLE_KERNEL:
+            CREPE_RESAMPLE_KERNEL[key_str] = Resample(
+                sr, CREPE_SAMPLING_RATE, lowpass_filter_width=128
+            )
+        resample_kernel = CREPE_RESAMPLE_KERNEL[key_str].to(get_optimal_torch_device())
     if method == "dio":
         f0, t = pyworld.harvest(
             audio.astype(np.double),
@@ -41,53 +53,20 @@ def compute(
             f0_floor=min,
             frame_period=1000 * hop / sr,
         )
-        f0 = pyworld.stonemask(audio.astype(np.double), f0, t, sr)
-    elif method == "mangio-crepe":
-        audio = audio.astype(
-            np.float32
-        )  # fixes the F.conv2D exception. We needed to convert double to float.
-        audio /= np.quantile(np.abs(audio), 0.999)
-        torch_device = get_optimal_torch_device()
-        audio = torch.from_numpy(audio).to(torch_device, copy=True)
-        audio = torch.unsqueeze(audio, dim=0)
-        if audio.ndim == 2 and audio.shape[0] > 1:
-            audio = torch.mean(audio, dim=0, keepdim=True).detach()
-        audio = audio.detach()
-        pitch: torch.Tensor = torchcrepe.predict(
-            audio,
-            sr,
-            hop,
-            min,
-            max,
-            crepe_model,
-            batch_size=hop * 2,
-            device=torch_device,
-            pad=True,
-        )
-        p_len = p_len or audio.shape[0] // hop
-        # Resize the pitch for final f0
-        source = np.array(pitch.squeeze(0).cpu().float().numpy())
-        source[source < 0.001] = np.nan
-        target = np.interp(
-            np.arange(0, len(source) * p_len, len(source)) / p_len,
-            np.arange(0, len(source)),
-            source,
-        )
-        f0 = np.nan_to_num(target)
-        f0 = f0[1:]  # Get rid of extra first frame
     elif method == "crepe":
         batch_size = 512
         torch_device = get_optimal_torch_device()
-        audio = torch.tensor(np.copy(audio))[None].float()
+        audio = resample_kernel(torch.FloatTensor(audio).unsqueeze(0).to(torch_device))
         f0, pd = torchcrepe.predict(
             audio,
-            sr,
+            CREPE_SAMPLING_RATE,
             hop,
             min,
             max,
             crepe_model,
             batch_size=batch_size,
             device=torch_device,
+            pad=True,
             return_periodicity=True,
         )
         pd = torchcrepe.filter.median(pd, 3)

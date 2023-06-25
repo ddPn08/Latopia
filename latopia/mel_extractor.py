@@ -67,7 +67,7 @@ def spectrogram_torch(
     else:
         i = audio
         win = hann_window[wnsize_dtype_device]
-    mel = torch.stft(
+    spec = torch.stft(
         i,
         filter_length,
         hop_length=hop_size,
@@ -80,8 +80,8 @@ def spectrogram_torch(
         return_complex=False,
     ).to(device=audio.device)
 
-    mel = torch.sqrt(mel.pow(2).sum(-1) + 1e-6)
-    return mel
+    spec = torch.sqrt(spec.pow(2).sum(-1) + 1e-6)
+    return spec
 
 
 mel_basis = {}
@@ -92,7 +92,9 @@ def spec_to_mel_torch(spec, n_fft, num_mels, sampling_rate, fmin, fmax):
     dtype_device = str(spec.dtype) + "_" + str(spec.device)
     fmax_dtype_device = str(fmax) + "_" + dtype_device
     if fmax_dtype_device not in mel_basis:
-        mel = librosa_mel_fn(sampling_rate, n_fft, num_mels, fmin, fmax)
+        mel = librosa_mel_fn(
+            sr=sampling_rate, n_fft=n_fft, n_mels=num_mels, fmin=fmin, fmax=fmax
+        )
         mel_basis[fmax_dtype_device] = torch.from_numpy(mel).to(
             dtype=spec.dtype, device=spec.device
         )

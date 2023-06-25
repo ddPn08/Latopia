@@ -1,3 +1,4 @@
 */**
-!vits/*
+!vits_templates/**/*
+!diffusion_templates/**/*
 !.gitignore

@@ -4,9 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from latopia.torch_utils import (
-    fused_add_tanh_sigmoid_multiply,
-)
+from latopia.torch_utils import fused_add_tanh_sigmoid_multiply
+
 from .transforms import piecewise_rational_quadratic_transform
 
 LRELU_SLOPE = 0.1
