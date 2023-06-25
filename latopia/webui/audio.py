@@ -26,5 +26,4 @@ def save_audio(audio: np.ndarray, sampling_rate: int, filename: str, format="wav
     filename = os.path.splitext(filename)[0]
     filepath = os.path.join(opts.output_dir, f"{filename}-{index}.{format}")
     sf.write(filepath, audio, sampling_rate)
-    audio.export(filepath, format=format)
     return os.path.relpath(filepath, opts.output_dir).replace("\\", "/")
