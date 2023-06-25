@@ -1,6 +1,8 @@
 from typing import *
 
 from .base import BaseConfig
+from .dataset import DatasetConfig
+from .train import TrainConfig
 
 
 class ViTsGeneratorConfig(BaseConfig):
@@ -28,27 +30,21 @@ class ViTsDiscriminatorConfig(BaseConfig):
     periods: List[int] = [2, 3, 5, 7, 11, 17, 23, 37]
 
 
-class ViTsDatasetConfig(BaseConfig):
-    max_wav_value: int = 32768.0
-    sampling_rate: int = 40000
-    filter_length: int = 2048
-    hop_length: int = 400
-    win_length: int = 2048
-    n_mel_channels: int = 125
-    mel_fmin: float = 0.0
-    mel_fmax: float = None
-
-
-class ViTsTrainConfig(BaseConfig):
+class ViTsTrainConfig(TrainConfig):
     segment_size: int = 12800
     init_lr_ratio: int = 1
     warmup_epochs: int = 0
     c_mel: int = 45
     c_kl: float = 1.0
-    dataset: ViTsDatasetConfig = ViTsDatasetConfig()
 
 
-class ViTsConfig(BaseConfig):
+class ViTsDatasetConfig(DatasetConfig):
+    max_wav_value: int = 32768.0
+    filter_length: int = 2048
+    win_length: int = 2048
+    n_mel_channels: int = 125
+
+
+class ViTsModelConfig(BaseConfig):
     generator: ViTsGeneratorConfig = ViTsGeneratorConfig()
     discriminator: ViTsDiscriminatorConfig = ViTsDiscriminatorConfig()
-    train: ViTsTrainConfig = ViTsTrainConfig()

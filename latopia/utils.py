@@ -1,10 +1,12 @@
 import gc
 import json
 import mmap
+import os
 import socket
 import subprocess
 
 import numpy as np
+import safetensors.torch
 import torch
 
 str_prec_to_torch = {
@@ -74,3 +76,19 @@ def load_audio(file: str, sr):
         raise RuntimeError(f"Failed to load audio: {e.stderr.decode()}") from e
 
     return np.frombuffer(out, np.float32).flatten()
+
+
+def load_model(filepath: str):
+    ext = os.path.splitext(filepath)[1]
+    if ext == ".safetensors":
+        state_dict = safetensors.torch.load_file(filepath)
+        metadata = read_safetensors_metadata(filepath)
+    else:
+        state_dict = torch.load(filepath)
+        metadata = state_dict.pop("metadata") if "metadata" in state_dict else {}
+        if "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+        elif "model" in state_dict:
+            state_dict = state_dict["model"]
+
+    return state_dict, metadata

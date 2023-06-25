@@ -58,11 +58,11 @@ latopia preprocess all ./configs/zundamon/dataset.toml 40000 --max_workers 8 --d
 3. Train
 
 ```bash
-latopia train vits ./configs/zundamon/config.toml ./configs/zundamon/dataset.toml  --vits_config_path ./configs/vits/40k.toml --device cuda
+latopia train vits ./configs/zundamon/config.toml --device cuda
 ```
 
 #### Inference
 
 ```bash
-latopia infer vits ./input.wav output.wav ./output/checkpoints/zundamon-30-G.safetensors ./models/encoders/checkpoint_best_legacy_500.pt --device cuda --torch_dtype fp16 --f0_method harvest
+latopia infer vits ./input.wav ./output.wav ./output/checkpoints/zundamon-30-G.safetensors ./models/encoders/checkpoint_best_legacy_500.pt --device cuda --torch_dtype fp16 --f0_method harvest
 ```

@@ -7,20 +7,19 @@ from typing import *
 import librosa
 import numpy as np
 import scipy.signal as signal
-import soundfile as sf
 import torch
 import tqdm
 from pydantic import BaseModel
 from scipy.io import wavfile
 
-from latopia import f0_extractor, feature_extractor
+from latopia import f0_extractor, feature_extractor, volume_extractor
 from latopia.audio_slicer import Slicer
 from latopia.config.dataset import DatasetSubsetConfig
-from latopia.feature_extractor import load_encoder
+from latopia.diffusion.vocoder import Vocoder
 from latopia.logger import set_logger
-from latopia.utils import load_audio
 
-from .base import AudioDataset, AudioDataSubset
+from .base import AudioDataset
+from .diffusion import DiffusionAudioDataSubset
 
 logger = set_logger(__name__)
 
@@ -46,11 +45,30 @@ class F0ExtractTask(BaseModel):
 
 class FeatureExtractTask(BaseModel):
     sampling_rate: int = 16000
+    hop_length: int = 160
     encoder_path: str
-    encoder_channels: Literal[256, 768] = 768
     encoder_output_layer: Literal[9, 12] = 12
     device: str = "cpu"
     subset_config: List[DatasetSubsetConfig]
+
+
+class MelExtractTask(BaseModel):
+    sampling_rate: int = 40000
+    device: str = "cpu"
+    vocoder_path: str
+    vocoder_type: Literal["nsf-hifigan", "nsf-hifigan-log10"] = "nsf-hifigan"
+
+
+class VolumeExtractTask(BaseModel):
+    sampling_rate: int = 16000
+    hop_length: int = 160
+
+
+def load_audio(path: str, sr: Optional[int] = None):
+    audio, sr = librosa.load(path, sr=sr)
+    if len(audio.shape) > 1:
+        audio = librosa.to_mono(audio)
+    return audio, sr
 
 
 def write_wave_runner(
@@ -76,8 +94,8 @@ def write_wave_runner(
 
     for subset_idx, file, dir in files:
         subset_config = task.subset_config[subset_idx]
-        waves_dir = os.path.join(dir, AudioDataSubset.WAVES_DIR_NAME)
-        waves_16k_dir = os.path.join(dir, AudioDataSubset.WAVES_16K_DIR_NAME)
+        waves_dir = os.path.join(dir, DiffusionAudioDataSubset.WAVES_DIR_NAME)
+        waves_16k_dir = os.path.join(dir, DiffusionAudioDataSubset.WAVES_16K_DIR_NAME)
         os.makedirs(waves_dir, exist_ok=True)
         os.makedirs(waves_16k_dir, exist_ok=True)
 
@@ -110,7 +128,7 @@ def write_wave_runner(
                 tmp_audio.astype(np.float32),
             )
 
-        audio = load_audio(file, task.target_sr)
+        audio, sr = load_audio(file, task.target_sr)
         audio = signal.lfilter(bh, ah, audio)
         if task.slice:
             for audio in slicer.slice(audio):
@@ -157,25 +175,67 @@ def f0_extract_runner(
     progress: Synchronized, files: List[Tuple[str, str]], task_raw: Dict
 ):
     task = F0ExtractTask.parse_obj(task_raw)
+
     for file, dir in files:
-        f0_dir = os.path.join(dir, AudioDataSubset.F0_DIR_NAME)
-        f0_nsf_dir = os.path.join(dir, AudioDataSubset.F0_NSF_DIR_NAME)
+        f0_dir = os.path.join(dir, DiffusionAudioDataSubset.F0_DIR_NAME)
+        f0_nsf_dir = os.path.join(dir, DiffusionAudioDataSubset.F0_NSF_DIR_NAME)
         os.makedirs(f0_dir, exist_ok=True)
         os.makedirs(f0_nsf_dir, exist_ok=True)
 
-        audio = load_audio(file, task.sampling_rate)
+        audio, sr = load_audio(file)
+
+        n_frames = int(len(audio) // task.hop_length) + 1
+        start_frame = int(0 * task.sampling_rate / task.hop_length)
+        real_silence_front = start_frame * task.hop_length / task.sampling_rate
+        audio = audio[int(np.round(real_silence_front * task.sampling_rate)) :]
+
+        def pad(f0):
+            if "crepe" in task.f0_method:
+                f0 = np.array(
+                    [
+                        f0[
+                            int(
+                                min(
+                                    int(
+                                        np.round(
+                                            n
+                                            * task.hop_length
+                                            / task.sampling_rate
+                                            / 0.005
+                                        )
+                                    ),
+                                    len(f0) - 1,
+                                )
+                            )
+                        ]
+                        for n in range(n_frames - start_frame)
+                    ]
+                )
+                f0 = np.pad(f0, (start_frame, 0))
+            else:
+                f0 = np.pad(
+                    f0.astype(np.float32),
+                    (start_frame, n_frames - len(f0) - start_frame),
+                )
+
+            return f0
 
         f0 = f0_extractor.compute(
             audio,
             method=task.f0_method,
-            sr=task.sampling_rate,
+            sr=sr,
+            hop=task.hop_length,
+            max=task.f0_max,
+            min=task.f0_min,
         )
+        f0 = pad(f0)
         np.save(
             os.path.join(f0_nsf_dir, f"{os.path.basename(file)}.npy"),
             f0,
             allow_pickle=False,
         )
         coarse = f0_extractor.course(f0, 256)
+        coarse = pad(coarse)
         np.save(
             os.path.join(f0_dir, f"{os.path.basename(file)}.npy"),
             coarse,
@@ -190,24 +250,21 @@ def feature_extract_runner(
 ):
     task = FeatureExtractTask.parse_obj(task_raw)
     device = torch.device(task.device)
-    encoder, cfg = load_encoder(task.encoder_path, device)
+    encoder = feature_extractor.load_encoder(task.encoder_path, device)[0]
 
     for subset_idx, file, dir in files:
         subset_config = task.subset_config[subset_idx]
-        features_dir = os.path.join(dir, AudioDataSubset.FEATURES_DIR_NAME)
+        features_dir = os.path.join(dir, DiffusionAudioDataSubset.FEATURES_DIR_NAME)
         os.makedirs(features_dir, exist_ok=True)
 
-        audio, sr = sf.read(file)
-
-        assert (
-            task.sampling_rate == sr
-        ), f"file {file} sampling rate {sr} != {task.sampling_rate}"
+        audio, sr = load_audio(file)
+        audio = torch.from_numpy(audio).float().unsqueeze(0).to(device)
 
         features = feature_extractor.extract(
             audio,
+            sr,
             device,
             encoder,
-            task.encoder_channels,
             task.encoder_output_layer,
             subset_config.normalize,
         )
@@ -222,6 +279,46 @@ def feature_extract_runner(
                 features,
                 allow_pickle=False,
             )
+        progress.value += 1
+
+
+def extract_mel_spectrogram_runner(
+    progress: Synchronized, files: List[Tuple[str, str]], task_raw: Dict
+):
+    task = MelExtractTask.parse_obj(task_raw)
+    device = torch.device(task.device)
+    vocoder = Vocoder(task.vocoder_type, task.vocoder_path, device)
+    for file, dir in files:
+        mel_dir = os.path.join(dir, DiffusionAudioDataSubset.MEL_DIR_NAME)
+        os.makedirs(mel_dir, exist_ok=True)
+        audio, sr = load_audio(file, task.sampling_rate)
+        audio = torch.from_numpy(audio).float().unsqueeze(0).to(device)
+        mel = vocoder.extract(audio, task.sampling_rate)
+        mel = mel.squeeze().to("cpu").numpy()
+        np.save(
+            os.path.join(mel_dir, f"{os.path.splitext(os.path.basename(file))[0]}.npy"),
+            mel,
+            allow_pickle=False,
+        )
+        progress.value += 1
+
+
+def extract_volume_runner(
+    progress: Synchronized, files: List[Tuple[str, str]], task_raw: Dict
+):
+    task = VolumeExtractTask.parse_obj(task_raw)
+    for file, dir in files:
+        volumes_dir = os.path.join(dir, DiffusionAudioDataSubset.VOLUME_DIR_NAME)
+        os.makedirs(volumes_dir, exist_ok=True)
+        audio, sr = load_audio(file, task.sampling_rate)
+        volume = volume_extractor.extract_volume(audio, hop_size=task.hop_length)
+        np.save(
+            os.path.join(
+                volumes_dir, f"{os.path.splitext(os.path.basename(file))[0]}.npy"
+            ),
+            volume,
+            allow_pickle=False,
+        )
         progress.value += 1
 
 
@@ -302,7 +399,6 @@ class PreProcessor:
         f0_method: f0_extractor.F0_METHODS_TYPE,
         max_workers: int = 1,
         crepe_model: str = "tiny",
-        sampling_rate: int = 16000,
         hop_length: int = 160,
         f0_max: int = 1100.0,
         f0_min: int = 50.0,
@@ -311,7 +407,7 @@ class PreProcessor:
     ):
         files = []
         for subset in self.dataset.subsets:
-            for file in subset.get_16k_waves():
+            for file in subset.get_waves():
                 files.append((file, subset.get_processed_dir()))
 
         if "crepe" in f0_method:
@@ -324,7 +420,6 @@ class PreProcessor:
                 F0ExtractTask(
                     f0_method=f0_method,
                     crepe_model=crepe_model,
-                    sampling_rate=sampling_rate,
                     hop_length=hop_length,
                     f0_max=f0_max,
                     f0_min=f0_min,
@@ -338,13 +433,13 @@ class PreProcessor:
     def extract_features(
         self,
         encoder_path: str,
-        encoder_channels: int = 768,
+        hop_length: int = 160,
         encoder_output_layer: int = 12,
         device: Literal["cpu", "cuda"] = "cpu",
     ):
         files = []
         for i, subset in enumerate(self.dataset.subsets):
-            for file in subset.get_16k_waves():
+            for file in subset.get_waves():
                 files.append((i, file, subset.get_processed_dir()))
 
         self.run_progress_proc(
@@ -352,12 +447,62 @@ class PreProcessor:
             files,
             (
                 FeatureExtractTask(
+                    hop_length=hop_length,
                     encoder_path=encoder_path,
-                    encoder_channels=encoder_channels,
                     encoder_output_layer=encoder_output_layer,
                     device=device,
                     subset_config=[subset.config for subset in self.dataset.subsets],
                 ).dict(),
             ),
             1,
+        )
+
+    def extract_volume(
+        self,
+        sampling_rate: int,
+        hop_length: int = 160,
+        max_workers: int = 1,
+    ):
+        files = []
+        for subset in self.dataset.subsets:
+            for file in subset.get_waves():
+                files.append((file, subset.get_processed_dir()))
+
+        self.run_progress_proc(
+            extract_volume_runner,
+            files,
+            (
+                VolumeExtractTask(
+                    sampling_rate=sampling_rate,
+                    hop_length=hop_length,
+                ).dict(),
+            ),
+            max_workers,
+        )
+
+    def extract_mel(
+        self,
+        vocoder_path: str,
+        sampling_rate: int,
+        vocoder_type: Literal["nsf-hifigan", "nsf-hifigan-log10"] = "nsf-hifigan",
+        device: str = "cpu",
+        max_workers: int = 1,
+    ):
+        files = []
+        for subset in self.dataset.subsets:
+            for file in subset.get_waves():
+                files.append((file, subset.get_processed_dir()))
+
+        self.run_progress_proc(
+            extract_mel_spectrogram_runner,
+            files,
+            (
+                MelExtractTask(
+                    vocoder_path=vocoder_path,
+                    sampling_rate=sampling_rate,
+                    vocoder_type=vocoder_type,
+                    device=device,
+                ).dict(),
+            ),
+            max_workers,
         )

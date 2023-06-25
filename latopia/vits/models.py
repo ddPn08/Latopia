@@ -13,9 +13,9 @@ from torch.nn.utils import spectral_norm, weight_norm
 from latopia import torch_utils
 from latopia.config.vits import ViTsDiscriminatorConfig, ViTsGeneratorConfig
 from latopia.utils import read_safetensors_metadata
-from latopia.vocoder.nsf_hifigan.models import Vocoder
 
 from . import attentions, modules
+from .vocoder import Vocoder
 
 
 class TextEncoder(nn.Module):

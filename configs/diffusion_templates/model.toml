@@ -1,0 +1,7 @@
+emb_channels = 768
+spk_embed_dim = 109
+use_pitch_aug = false
+n_layers = 20
+n_chans = 512
+n_hidden = 256
+k_step_max = 1000

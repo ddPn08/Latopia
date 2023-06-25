@@ -20,19 +20,3 @@ spk_embed_dim = 109
 [discriminator]
 use_spectral_norm = false
 periods = [2, 3, 5, 7, 11, 17, 23, 37]
-
-[train]
-segment_size = 11520
-init_lr_ratio = 1
-warmup_epochs = 0
-c_mel = 45
-c_kl = 1.0
-
-[train.dataset]
-max_wav_value = 32768.0
-sampling_rate = 40000
-filter_length = 2048
-hop_length = 400
-win_length = 2048
-n_mel_channels = 128
-mel_fmin = 0.0

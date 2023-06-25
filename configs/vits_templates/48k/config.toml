@@ -1,0 +1,17 @@
+dataset_config = "./dataset.toml"
+model_config = "./model.toml"
+
+pretrained_model_path = "./models/checkpoints/vits/pretrained-48k.g.safetensors"
+pretrained_discriminator_path = "./models/checkpoints/vits/pretrained-48k.d.safetensors"
+output_dir = "./models/checkpoints/vits/template"
+output_name = "template"
+cache_in_gpu = false
+batch_size = 1
+save_every_n_epoch = 5
+max_train_epoch = 30
+
+segment_size = 11520
+init_lr_ratio = 1
+warmup_epochs = 0
+c_mel = 45
+c_kl = 1.0

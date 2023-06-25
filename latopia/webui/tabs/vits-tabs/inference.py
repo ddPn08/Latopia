@@ -1,7 +1,6 @@
 import asyncio
 from typing import *
 
-from pydub import AudioSegment
 from reactpy import component, hooks, html
 
 from latopia.utils import load_audio
@@ -29,13 +28,9 @@ def infer(
     pipe = create_vits(checkpoint, encoder_model)
     audio = load_audio(INFER_INPUT_FILE["path"], 16000)
     result = pipe(audio, f0_extractor, transpose)
-    result = AudioSegment(
-        result,
-        frame_rate=pipe.model.sampling_rate,
-        sample_width=2,
-        channels=1,
+    filepath = save_audio(
+        result, pipe.model.sampling_rate, INFER_INPUT_FILE["filename"]
     )
-    filepath = save_audio(result, INFER_INPUT_FILE["filename"])
     return filepath
 
 
@@ -137,7 +132,7 @@ def ui():
                 html.div(
                     *[
                         LabeledRadio(name, f0_extractor, set_f0_extractor)
-                        for name in ["dio", "harvest", "crepe", "mangio-crepe"]
+                        for name in ["dio", "harvest", "crepe"]
                     ]
                 ),
                 "F0 Extractor",

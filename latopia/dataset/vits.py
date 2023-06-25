@@ -6,9 +6,9 @@ import torch.utils.data
 from scipy.io.wavfile import read
 
 from latopia import mel_extractor
-from latopia.config.dataset import DatasetConfig
 from latopia.config.vits import ViTsDatasetConfig
-from latopia.dataset.base import AudioDataset
+
+from .base import AudioDataset, AudioDataSubset
 
 
 def load_wav_to_torch(full_path):
@@ -16,63 +16,53 @@ def load_wav_to_torch(full_path):
     return torch.FloatTensor(data.astype(np.float32)), sampling_rate
 
 
+class ViTsAudioDataSubset(AudioDataSubset):
+    F0_DIR_NAME = "f0"
+    F0_NSF_DIR_NAME = "f0_nsf"
+    FEATURES_DIR_NAME = "features"
+
+    DATA_TYPES = [
+        *AudioDataSubset.DATA_TYPES,
+        ("f0", F0_DIR_NAME, ".npy"),
+        ("f0_nsf", F0_NSF_DIR_NAME, ".npy"),
+        ("features", FEATURES_DIR_NAME, ".npy"),
+    ]
+
+
 class ViTsAudioDataset(AudioDataset):
-    def __init__(self, config: DatasetConfig, data_config: ViTsDatasetConfig):
+    __subset_class__ = ViTsAudioDataSubset
+
+    def __init__(self, config: ViTsDatasetConfig):
         super().__init__(config)
-
-        self.max_wav_value = data_config.max_wav_value
-        self.sampling_rate = data_config.sampling_rate
-        self.filter_length = data_config.filter_length
-        self.hop_length = data_config.hop_length
-        self.win_length = data_config.win_length
-        self.sampling_rate = data_config.sampling_rate
-        self.min_text_len = 1
-        self.max_text_len = 5000
-
-        self.lengths = []
-        for subset in self.subsets:
-            for file in subset.files:
-                self.lengths.append(os.path.getsize(file) // (3 * self.hop_length))
-
-        # add mute file
-        if self.config.add_mute:
-            self.lengths.append(self.sampling_rate * 6 + 78)
+        self.config = config
 
     def __getitem__(self, idx):
-        subset = self.subsets[self.idx_subset_map[idx]]
-        prev_subset = (
-            None
-            if self.idx_subset_map[idx] == 0
-            else self.subsets[self.idx_subset_map[idx] - 1]
-        )
-        rel_idx = idx if prev_subset is None else idx - len(prev_subset.files)
+        subset, rel_idx = self.get_rel_idx(idx)
 
-        file = subset.get_waves()[rel_idx]
-        f0 = subset.get_f0()[rel_idx]
-        f0_nsf = subset.get_f0_nsf()[rel_idx]
-        features = subset.get_features()[rel_idx]
+        data = subset.get(rel_idx)
 
         speaker_id = torch.LongTensor([int(subset.config.speaker_id)])
 
-        mel, audio = self.get_audio(file)
+        _, _audio = read(data["waves"])
+        spec, audio = self.get_audio(data["waves"])
 
-        f0 = np.load(f0)
-        f0_nsf = np.load(f0_nsf)
-        features = np.load(features)
+        f0 = np.load(data["f0"])
+        f0_nsf = np.load(data["f0_nsf"])
 
+        features = np.load(data["features"]).squeeze(0)
         features = np.repeat(features, 2, axis=0)
         n_num = min(features.shape[0], 900)
-
         features = torch.FloatTensor(features[:n_num, :])
+
         f0 = torch.LongTensor(f0[:n_num])
         f0_nsf = torch.FloatTensor(f0_nsf[:n_num])
 
-        len_features, len_mel = features.size()[0], mel.size()[-1]
+        len_features, len_spec = features.size()[0], spec.size()[-1]
 
-        if len_features != len_mel:
-            len_min = min(len_features, len_mel)
-            len_audio = len_min * self.hop_length
-            mel = mel[:, :len_min]
+        if len_features != len_spec:
+            len_min = min(len_features, len_spec)
+            len_audio = len_min * self.config.hop_length
+            spec = spec[:, :len_min]
             audio = audio[:, :len_audio]
 
             features = features[:len_min, :]
@@ -82,7 +72,7 @@ class ViTsAudioDataset(AudioDataset):
         example = {}
         example["features"] = features
         example["audio"] = audio
-        example["mel"] = mel
+        example["spec"] = spec
         example["f0"] = f0
         example["f0_nsf"] = f0_nsf
         example["speaker_id"] = speaker_id
@@ -91,13 +81,13 @@ class ViTsAudioDataset(AudioDataset):
 
     def get_audio(self, filename):
         audio, sampling_rate = load_wav_to_torch(filename)
-        if sampling_rate != self.sampling_rate:
+        if sampling_rate != self.config.sampling_rate:
             raise ValueError(
                 "{} SR doesn't match target {} SR".format(
-                    sampling_rate, self.sampling_rate
+                    sampling_rate, self.config.sampling_rate
                 )
             )
-        # audio_norm = audio / self.max_wav_value
+        audio_norm = audio / self.config.max_wav_value
         audio_norm = audio.unsqueeze(0)
         spec_filename = filename.replace(".wav", ".spec.pt")
         if os.path.exists(spec_filename):
@@ -105,60 +95,59 @@ class ViTsAudioDataset(AudioDataset):
         else:
             spec = mel_extractor.spectrogram_torch(
                 audio_norm,
-                self.filter_length,
-                self.hop_length,
-                self.win_length,
+                self.config.filter_length,
+                self.config.hop_length,
+                self.config.win_length,
                 center=False,
             )
-            spec = torch.squeeze(spec, 0)
+            spec = spec.squeeze(0)
             torch.save(spec, spec_filename, _use_new_zipfile_serialization=False)
         return spec, audio_norm
 
 
-class TextAudioCollate:
+class ViTsAudioCollate:
     """Zero-pads model inputs and targets"""
 
     def __init__(self, return_ids=False):
         self.return_ids = return_ids
 
     def __call__(self, batch):
-        """Collate's training batch from normalized text and aduio
-        PARAMS
-        ------
-        batch: [text_normalized, spec_normalized, wav_normalized]
-        """
-        # Right zero-pad all one-hot text sequences to max input length
         _, ids_sorted_decreasing = torch.sort(
-            torch.LongTensor([x["mel"].size(1) for x in batch]), dim=0, descending=True
+            torch.LongTensor([x["spec"].size(1) for x in batch]), dim=0, descending=True
         )
 
-        max_mel_len = max([x["mel"].size(1) for x in batch])
+        max_spec_len = max([x["spec"].size(1) for x in batch])
         max_wave_len = max([x["audio"].size(1) for x in batch])
-        mel_lengths = torch.LongTensor(len(batch))
-        audio_lengths = torch.LongTensor(len(batch))
-        mel_padded = torch.FloatTensor(len(batch), batch[0]["mel"].size(0), max_mel_len)
-        audio_padded = torch.FloatTensor(len(batch), 1, max_wave_len)
-        mel_padded.zero_()
-        audio_padded.zero_()
-
         max_phone_len = max([x["features"].size(0) for x in batch])
+
+        spec_lengths = torch.LongTensor(len(batch))
+        audio_lengths = torch.LongTensor(len(batch))
         features_lengths = torch.LongTensor(len(batch))
+
+        spec_padded = torch.FloatTensor(
+            len(batch), batch[0]["spec"].size(0), max_spec_len
+        )
+        audio_padded = torch.FloatTensor(len(batch), 1, max_wave_len)
+        f0_padded = torch.LongTensor(len(batch), max_phone_len)
+        f0_nsf_padded = torch.FloatTensor(len(batch), max_phone_len)
         features_padded = torch.FloatTensor(
             len(batch), max_phone_len, batch[0]["features"].shape[1]
         )
-        f0_padded = torch.LongTensor(len(batch), max_phone_len)
-        f0_nsf_padded = torch.FloatTensor(len(batch), max_phone_len)
-        features_padded.zero_()
+
+        spec_padded.zero_()
+        audio_padded.zero_()
         f0_padded.zero_()
         f0_nsf_padded.zero_()
+        features_padded.zero_()
+
         speaker_id = torch.LongTensor(len(batch))
 
         for i in range(len(ids_sorted_decreasing)):
             row = batch[ids_sorted_decreasing[i]]
 
-            mel = row["mel"]
-            mel_padded[i, :, : mel.size(1)] = mel
-            mel_lengths[i] = mel.size(1)
+            spec = row["spec"]
+            spec_padded[i, :, : spec.size(1)] = spec
+            spec_lengths[i] = spec.size(1)
 
             audio = row["audio"]
             audio_padded[i, :, : audio.size(1)] = audio
@@ -178,8 +167,8 @@ class TextAudioCollate:
         example = {}
         example["features"] = features_padded
         example["features_lengths"] = features_lengths
-        example["mel"] = mel_padded
-        example["mel_lengths"] = mel_lengths
+        example["spec"] = spec_padded
+        example["spec_lengths"] = spec_lengths
         example["audio"] = audio_padded
         example["audio_lengths"] = audio_lengths
         example["f0"] = f0_padded

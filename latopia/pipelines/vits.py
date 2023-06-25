@@ -72,9 +72,9 @@ class ViTsPipeline:
     ):
         feats = feature_extractor.extract(
             audio,
+            self.sr,
             self.device,
             self.encoder,
-            768,
             12,
             normalize=False,
             return_type="torch",
@@ -137,7 +137,6 @@ class ViTsPipeline:
             audio_pad,
             f0_method,
             self.sr,
-            p_len=p_len,
         )
         f0_nsf *= pow(2, transpose / 12)
         f0 = f0_extractor.course(f0_nsf, 256)

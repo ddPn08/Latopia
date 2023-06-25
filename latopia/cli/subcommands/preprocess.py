@@ -13,21 +13,14 @@ logger = set_logger(__name__)
 
 def all(
     config_path: str,
-    target_sr: int,
     max_workers: int = 1,
-    write_mute: bool = True,
-    slice: bool = True,
     f0_method: F0_METHODS_TYPE = "crepe",
     crepe_model: str = "tiny",
-    hop_length: int = 160,
-    f0_max: int = 1100.0,
-    f0_min: int = 50.0,
-    f0_mel_max: Optional[int] = None,
-    f0_mel_min: Optional[int] = None,
     encoder_path: str = "./models/encoders/checkpoint_best_legacy_500.pt",
-    encoder_channels: int = 768,
     encoder_output_layer: int = 12,
     device: str = "cpu",
+    vocoder_path: str = "./models/vocoders/nsf_hifigan",
+    vocoder_type: str = "nsf-hifigan",
 ):
     r"""
     Preprocess all files in the dataset.
@@ -61,27 +54,41 @@ def all(
     preprocessor = PreProcessor(dataset)
     logger.info("Writing wave files...")
     preprocessor.write_wave(
-        target_sr,
-        slice=slice,
-        write_mute=write_mute,
+        config.sampling_rate,
+        slice=config.slice,
+        write_mute=config.write_mute,
+        max_workers=max_workers,
+    )
+    logger.info("Extracting volume...")
+    preprocessor.extract_volume(
+        sampling_rate=config.sampling_rate,
+        hop_length=config.hop_length,
         max_workers=max_workers,
     )
     logger.info("Extracting f0...")
     preprocessor.extract_f0(
         f0_method,
         crepe_model=crepe_model,
-        hop_length=hop_length,
-        f0_max=f0_max,
-        f0_min=f0_min,
-        f0_mel_max=f0_mel_max,
-        f0_mel_min=f0_mel_min,
+        hop_length=config.hop_length,
+        f0_max=config.f0_max,
+        f0_min=config.f0_min,
+        f0_mel_max=config.f0_mel_max,
+        f0_mel_min=config.f0_mel_min,
         max_workers=max_workers,
     )
     logger.info("Extracting features...")
     preprocessor.extract_features(
         encoder_path,
-        encoder_channels=encoder_channels,
         encoder_output_layer=encoder_output_layer,
+        hop_length=config.hop_length,
+        device=device,
+    )
+    logger.info("Extracting mel spectrogram...")
+    preprocessor.extract_mel(
+        vocoder_path,
+        sampling_rate=config.sampling_rate,
+        max_workers=max_workers,
+        vocoder_type=vocoder_type,
         device=device,
     )
 

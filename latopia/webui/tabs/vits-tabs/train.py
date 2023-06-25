@@ -7,7 +7,7 @@ from reactpy import component, hooks, html
 
 from latopia.config.dataset import DatasetConfig, DatasetSubsetConfig
 from latopia.config.train import TrainConfig
-from latopia.config.vits import ViTsConfig
+from latopia.config.vits import ViTsModelConfig
 from latopia.vits.train import train
 from latopia.webui.components.radio import LabeledRadio
 from latopia.webui.context import ROOT_DIR, context, opts
@@ -92,7 +92,7 @@ def ui():
                 )
             ]
         )
-        vits_config = ViTsConfig.parse_toml(
+        vits_config = ViTsModelConfig.parse_toml(
             os.path.join(ROOT_DIR, "configs", "vits", f"{sampling_rate}.toml")
         )
         await loop.run_in_executor(
