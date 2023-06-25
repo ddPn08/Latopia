@@ -5,6 +5,9 @@
 
 Speech AI training and inference tools
 
+## Screenshots
+
+![](/screenshots/webui-01.png)
 ## Installation
 
 ```bash
@@ -23,7 +26,7 @@ python setup.py develop
 latopia webui
 ```
 
-## Cli Usage
+## CLI Usage
 
 ### Vits
 
