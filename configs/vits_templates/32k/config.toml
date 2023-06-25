@@ -1,3 +1,6 @@
+dataset_config = "./dataset.toml"
+model_config = "./model.toml"
+
 pretrained_model_path = "./models/checkpoints/vits/pretrained-32k.g.safetensors"
 pretrained_discriminator_path = "./models/checkpoints/vits/pretrained-32k.d.safetensors"
 output_dir = "./models/checkpoints/vits/template"

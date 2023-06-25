@@ -1,3 +1,6 @@
+dataset_config = "./dataset.toml"
+model_config = "./model.toml"
+
 pretrained_model_path = "./models/checkpoints/diff/pretrained.pt"
 output_dir = "./models/checkpoints/diff/template"
 output_name = "template"
